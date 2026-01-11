@@ -42,8 +42,8 @@ class App extends StatelessWidget {
       ),
       home: const VideoPlayerScreen(
         storagePath:
-            'https://firebasestorage.googleapis.com/v0/b/speechbuddy-30390.appspot.com/o/videoplayback.mp4?alt=media&token=e722d3f8-fabc-4d22-bcc8-4f8777d44224',
-        questionInterval: Duration(seconds: 10),
+            'https://firebasestorage.googleapis.com/v0/b/speechbuddy-30390.appspot.com/o/2ECFABB1-98C9-4440-900F-A7130CDE9285.mov?alt=media&token=2497d900-59e9-44e2-a88f-7d0f160fee49',
+        questionInterval: Duration(milliseconds: 31550),
       ),
     );
   }

@@ -30,8 +30,8 @@ class QuestionService {
 
     return const Question(
       id: 'fallback',
-      prompt: 'What is the name of this video ?',
-      options: <String>['Wimee', 'Craft Lab', 'TV'],
+      prompt: 'What are the two key components for establishing neural connections?',
+      options: <String>['PN & PC', 'CA & DA ', 'TV & RA'],
     );
   }
 }

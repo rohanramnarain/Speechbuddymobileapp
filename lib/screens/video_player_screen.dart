@@ -13,7 +13,7 @@ class VideoPlayerScreen extends StatefulWidget {
   const VideoPlayerScreen({
     super.key,
     required this.storagePath,
-    this.questionInterval = const Duration(seconds: 10),
+    this.questionInterval = const Duration(milliseconds: 31550),
   });
 
   final String storagePath;
@@ -119,18 +119,43 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   Future<VideoPlayerController> _downloadAndCreateFileController(
     Uri uri,
   ) async {
-    final response = await http.get(uri);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('Video download failed (HTTP ${response.statusCode}).');
+    final client = http.Client();
+    try {
+      final request = http.Request('GET', uri);
+      final response = await client
+          .send(request)
+          .timeout(const Duration(seconds: 90));
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('Video download failed (HTTP ${response.statusCode}).');
+      }
+
+      final isMov = uri.path.toLowerCase().endsWith('.mov');
+      final ext = isMov ? '.mov' : '.mp4';
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      final file = File(
+        '${Directory.systemTemp.path}/speechbuddy_cached_video_$ts$ext',
+      );
+
+      final sink = file.openWrite();
+      var bytes = 0;
+      await for (final chunk in response.stream) {
+        bytes += chunk.length;
+        sink.add(chunk);
+      }
+      await sink.close();
+
+      final expected = response.contentLength;
+      if (expected != null && expected > 0 && bytes < expected) {
+        throw Exception('Video download incomplete ($bytes/$expected bytes).');
+      }
+
+      final fileController = VideoPlayerController.file(file);
+      await fileController.initialize();
+      return fileController;
+    } finally {
+      client.close();
     }
-
-    final fileName = 'speechbuddy_cached_video.mp4';
-    final file = File('${Directory.systemTemp.path}/$fileName');
-    await file.writeAsBytes(response.bodyBytes, flush: true);
-
-    final fileController = VideoPlayerController.file(file);
-    await fileController.initialize();
-    return fileController;
   }
 
   void _handleControllerUpdate() {
@@ -290,32 +315,38 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   Widget _buildControls() {
     final controller = _controller!;
-    final isPlaying = controller.value.isPlaying;
 
-    return Container(
-      color: Colors.black,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            _format(controller.value.position),
-            style: const TextStyle(color: Colors.white70),
+    return ValueListenableBuilder<VideoPlayerValue>(
+      valueListenable: controller,
+      builder: (context, value, child) {
+        return Container(
+          color: Colors.black,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                _format(value.position),
+                style: const TextStyle(color: Colors.white70),
+              ),
+              IconButton(
+                onPressed: _togglePlayback,
+                icon: Icon(
+                  value.isPlaying
+                      ? Icons.pause_circle_filled
+                      : Icons.play_circle_fill,
+                ),
+                color: Colors.white,
+                iconSize: 40,
+              ),
+              Text(
+                _format(value.duration),
+                style: const TextStyle(color: Colors.white70),
+              ),
+            ],
           ),
-          IconButton(
-            onPressed: _togglePlayback,
-            icon: Icon(
-              isPlaying ? Icons.pause_circle_filled : Icons.play_circle_fill,
-            ),
-            color: Colors.white,
-            iconSize: 40,
-          ),
-          Text(
-            _format(controller.value.duration),
-            style: const TextStyle(color: Colors.white70),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -440,15 +471,30 @@ class _QuestionContent extends StatefulWidget {
   State<_QuestionContent> createState() => _QuestionContentState();
 }
 
-class _QuestionContentState extends State<_QuestionContent> {
+class _QuestionContentState extends State<_QuestionContent>
+    with SingleTickerProviderStateMixin {
   final VoiceAnswerService _voice = VoiceAnswerService();
 
   bool _isRecording = false;
   bool _isUploading = false;
   String? _voiceError;
 
+  late final AnimationController _recordBlink;
+
+  @override
+  void initState() {
+    super.initState();
+    _recordBlink = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 650),
+      lowerBound: 0.25,
+      upperBound: 1.0,
+    );
+  }
+
   @override
   void dispose() {
+    _recordBlink.dispose();
     _voice.dispose();
     super.dispose();
   }
@@ -466,6 +512,7 @@ class _QuestionContentState extends State<_QuestionContent> {
         setState(() {
           _isRecording = true;
         });
+        _recordBlink.repeat(reverse: true);
         return;
       }
 
@@ -478,6 +525,9 @@ class _QuestionContentState extends State<_QuestionContent> {
       setState(() {
         _isRecording = false;
       });
+      _recordBlink
+        ..stop()
+        ..value = 1.0;
 
       // Treat voice as an answer. Store URL in the answer string.
       widget.onSelect('voice:$url');
@@ -487,6 +537,9 @@ class _QuestionContentState extends State<_QuestionContent> {
         _isRecording = false;
         _voiceError = e.toString().replaceFirst('Exception: ', '');
       });
+      _recordBlink
+        ..stop()
+        ..value = 1.0;
     } finally {
       if (mounted) {
         setState(() {
@@ -513,6 +566,8 @@ class _QuestionContentState extends State<_QuestionContent> {
           ElevatedButton(
             onPressed: _isUploading ? null : _toggleVoiceAnswer,
             style: ElevatedButton.styleFrom(
+              backgroundColor: _isRecording ? Colors.amber : Colors.green,
+              foregroundColor: _isRecording ? Colors.white : Colors.black,
               minimumSize: const Size.fromHeight(48),
             ),
             child: _isUploading
@@ -521,36 +576,40 @@ class _QuestionContentState extends State<_QuestionContent> {
                     width: 20,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : Text(_isRecording ? 'Stop recording' : 'Speak to answer'),
+                : Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      FadeTransition(
+                        opacity: _isRecording
+                            ? _recordBlink
+                            : const AlwaysStoppedAnimation(1.0),
+                        child: const Icon(
+                          Icons.fiber_manual_record,
+                          color: Colors.red,
+                          size: 18,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        _isRecording ? 'Stop recording' : 'Answer with speech',
+                        style: TextStyle(
+                          color: _isRecording ? Colors.white : Colors.black,
+                        ),
+                      ),
+                    ],
+                  ),
           ),
           if (_voiceError != null) ...[
             const SizedBox(height: 8),
             Text(_voiceError!, style: const TextStyle(color: Colors.black54)),
           ],
           const SizedBox(height: 16),
-          ...q.options.map(
-            (option) => Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: ElevatedButton(
-                onPressed: _isRecording || _isUploading
-                    ? null
-                    : () => widget.onSelect(option),
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                ),
-                child: Text(option),
-              ),
-            ),
-          ),
           TextButton(
             onPressed: _isRecording || _isUploading
                 ? null
                 : () => widget.onSelect('skipped'),
-            child: const Text('Skip and continue'),
-          ),
-          TextButton(
-            onPressed: _isRecording || _isUploading ? null : widget.onResume,
-            child: const Text('Resume video'),
+            child: const Text('Skip question'),
           ),
         ],
       ),
