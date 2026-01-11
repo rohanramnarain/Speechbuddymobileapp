@@ -592,7 +592,7 @@ class _QuestionContentState extends State<_QuestionContent>
                       ),
                       const SizedBox(width: 10),
                       Text(
-                        _isRecording ? 'Stop recording' : 'Answer with speech',
+                        _isRecording ? 'Stop recording' : 'Record Your Answer',
                         style: TextStyle(
                           color: _isRecording ? Colors.white : Colors.black,
                         ),
